@@ -1,7 +1,20 @@
 all: main
 
-main: main.c
-	gcc -g -O0 -Wall filterimage.c lodepng.c main.c -o main.out
+GCC_OPTIONS = -O3 -Wall -fsanitize=address -g
+OBJECTS = main.o filterimage.o lodepng.o
+EXEC_NAME = main.out
+
+main: main.o filterimage.o lodepng.o
+	gcc $(GCC_OPTIONS) -o $(EXEC_NAME) $(OBJECTS)
+
+main.o: main.c
+	gcc -c -g main.c
+
+lodepng.o: lodepng.c lodepng.h
+	gcc -c -g lodepng.c
+
+filterimage.o: filterimage.c filterimage.h
+	gcc -c -g filterimage.c
 
 clean: main
-	rm main && make all
+	rm -rf $(EXEC_NAME) $(OBJECTS) && make all

@@ -30,35 +30,16 @@ int main(int argc, const char *argv[])
     printf("\tColor channels: 3 (RGB)\n");
     printf("\tBit depth: 8\n");
 
-    // --- FILTERING ---
-    int padding = kernel_radius * 2;
-    int padded_width = w + padding,
-        padded_height = h + padding;
-    unsigned char *padded_image = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
-    pad_image(&image_buffer, &padded_image, w, h, padding, channel_count);
-
-    float *kernel = malloc((2 * kernel_radius + 1) * sizeof(float));
-    create_1d_filter_kernel(&kernel, &gaussian_kernel_fun, kernel_radius);
-
-    unsigned char *filtered = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
-    unsigned char *horizontally_filtered = malloc(padded_width * padded_height * sizeof(unsigned char));
-    filter_image_separable(&filtered, &horizontally_filtered, &padded_image, padded_width, padded_height, &kernel, kernel_radius, channel_count);
-
-    unpad_image(&image_buffer, &filtered, w, h, padding, channel_count);
-    // --- FILTERING ---
+    image_buffer = *filter(&image_buffer, w, h, channel_count, kernel_radius, &box_kernel_fun, REPEAT);
 
     printf("Filter options:\n");
     printf("\tKernel radius: %li\n", kernel_radius);
-    printf("\tKernel type: %s\n", "gaussian_kernel_1d");
-    printf("\tOverflow behaviour: %s\n", "ignore (dark edges)");
+    printf("\tKernel type: %s\n", "box_kernel_fun");
+    printf("\tOverflow behaviour: %i\n", REPEAT);
 
     char *new_filename;
     if (asprintf(&new_filename, "%s.filtered.png", filename) == -1)
     {
-        free(horizontally_filtered);
-        free(filtered);
-        free(kernel);
-        free(padded_image);
         free(image_buffer);
         exit(-1);
     }
@@ -67,19 +48,15 @@ int main(int argc, const char *argv[])
     size_t pngsize;
     error = lodepng_encode24(&png, &pngsize, image_buffer, w, h);
     if (!error)
+    {
         lodepng_save_file(png, pngsize, new_filename);
+        printf("Out: %s\n", new_filename);
+    }
     else
         printf("Could not save file. Error %u.\n", error);
 
-    printf("Out: %s\n", new_filename);
-
     free(png);
     free(new_filename);
-    free(filtered);
-    free(horizontally_filtered);
-    free(kernel);
-    free(padded_image);
     free(image_buffer);
-
     return 0;
 }

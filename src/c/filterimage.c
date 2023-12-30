@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include "filterimage.h"
 
 /* Convolves a horizontal filter kernel across an image region.*/
 unsigned char filter_region_one_channel_horizontal(unsigned char **image, int width, int start, int end, float **kernel, int kernel_radius, int channel_count)
@@ -69,7 +70,7 @@ void filter_image_separable(unsigned char **filtered, unsigned char **horizontal
 {
     int width = w * channel_count;
     int height = h;
-    for (int y = kernel_radius; y < height - kernel_radius; y++)
+    for (int y = 0; y < height; y++)
     {
         for (int x = kernel_radius * channel_count; x < width - kernel_radius * channel_count; x++)
         {
@@ -94,30 +95,50 @@ void filter_image_separable(unsigned char **filtered, unsigned char **horizontal
     }
 }
 
-void create_1d_filter_kernel(float **kernel, float (*f)(int, int), int radius)
+void pad_image(unsigned char **image, unsigned char **padded, int original_w, int original_h, int padding, int channel_count, OverflowMode overflow_mode)
 {
-    for (int i = -radius; i <= radius; i++)
-    {
-        (*kernel)[i + radius] = f(i, radius);
-        // printf("%f%s ", (*kernel)[i + radius], i == radius - 1 ? "" : ", ");
-    }
-}
+    int padding_left = padding * channel_count / 2;
+    int padding_top = padding / 2;
+    int padded_width = (original_w + padding) * channel_count;
+    int padded_height = original_h + padding;
+    int padded_image_start = padded_width * padding_top + padding_left;
 
-void pad_image(unsigned char **image, unsigned char **padded, int original_w, int original_h, int padding, int channel_count)
-{
     for (unsigned char *image_ptr = *image; image_ptr < *image + original_w * channel_count * original_h; image_ptr += original_w * channel_count)
     {
         int row = (image_ptr - *image) / (original_w * channel_count);
-        int padded_width = (original_w + padding) * channel_count;
-        int padded_image_start = padded_width * padding / 2 + padding * channel_count / 2;
         memcpy(
             *padded + padded_image_start + padded_width * row,
             image_ptr,
             original_w * channel_count);
+
+        if (overflow_mode == REPEAT)
+        {
+            for (int i = 0; i < padding / 2; i++)
+            {
+                for (int c = 0; c < channel_count; c++)
+                {
+                    int color_offset = i * channel_count + c;
+                    (*padded)[padded_image_start - padding_left + padded_width * row + color_offset] = image_ptr[c];
+                    (*padded)[padded_image_start - padding_left + padded_width * (row + 1) - padding_left + color_offset] = image_ptr[original_w * channel_count - channel_count + c];
+                }
+            }
+        }
+    }
+
+    if (overflow_mode == REPEAT)
+    {
+        for (int col = 0; col < padded_width; col++)
+        {
+            for (int i = 0; i < padding / 2; i++)
+            {
+                (*padded)[col + padded_width * i] = (*padded)[padded_image_start - padding_left + col];
+                (*padded)[padded_width * padded_height - col - padded_width * i] = (*padded)[padded_width * padded_height - padded_image_start - col];
+            }
+        }
     }
 }
 
-void unpad_image(unsigned char **image, unsigned char **padded, int original_w, int original_h, int padding, int channel_count)
+void unpad_image(unsigned char **padded, unsigned char **image, int original_w, int original_h, int padding, int channel_count)
 {
     for (unsigned char *image_ptr = *image; image_ptr < *image + original_w * channel_count * original_h; image_ptr += original_w * channel_count)
     {
@@ -128,6 +149,14 @@ void unpad_image(unsigned char **image, unsigned char **padded, int original_w, 
             image_ptr,
             *padded + padded_image_start + padded_width * row,
             original_w * channel_count);
+    }
+}
+
+void create_1d_filter_kernel(float **kernel, float (*f)(int, int), int radius)
+{
+    for (int i = -radius; i <= radius; i++)
+    {
+        (*kernel)[i + radius] = f(i, radius);
     }
 }
 
@@ -145,4 +174,28 @@ float gaussian_kernel_fun(int i, int radius)
     }
 
     return (1 / sqrtf(2 * M_PI * powf(std_dev, 2))) * powf(M_E, -powf(i, 2) / (2 * powf(std_dev, 2)));
+}
+
+unsigned char **filter(unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode)
+{
+    int padding = kernel_radius * 2;
+    int padded_width = width + padding,
+        padded_height = height + padding;
+    unsigned char *padded_image = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
+    pad_image(image, &padded_image, width, height, padding, channel_count, overflow_mode);
+
+    float *kernel = malloc((2 * kernel_radius + 1) * sizeof(float));
+    create_1d_filter_kernel(&kernel, filter_fun, kernel_radius);
+
+    unsigned char *filtered = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
+    unsigned char *horizontally_filtered = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
+    filter_image_separable(&filtered, &horizontally_filtered, &padded_image, padded_width, padded_height, &kernel, kernel_radius, channel_count);
+
+    unpad_image(&filtered, image, width, height, padding, channel_count);
+
+    free(horizontally_filtered);
+    free(filtered);
+    free(kernel);
+    free(padded_image);
+    return image;
 }
