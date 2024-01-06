@@ -1,6 +1,6 @@
 all: main
 
-GCC_OPTIONS = -O3 -Wall -fsanitize=address -g
+GCC_OPTIONS = -O3 -Wall -g -framework OpenCL #-fsanitize=address 
 OBJECTS = main.o filterimage.o lodepng.o
 EXEC_NAME = main.out
 
@@ -13,7 +13,7 @@ main.o: main.c
 lodepng.o: lodepng.c lodepng.h
 	gcc -c -g lodepng.c
 
-filterimage.o: filterimage.c filterimage.h
+filterimage.o: filterimage.c filterimage.h filterimage_types.h
 	gcc -c -g filterimage.c
 
 clean: main
