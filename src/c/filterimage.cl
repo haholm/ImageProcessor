@@ -48,11 +48,109 @@ __kernel void pad_image_cl(__global unsigned char *image,
   }
 }
 
-__kernel void
-filter_image_separable(__global unsigned char *filtered,
-                       __global unsigned char *horizontally_filtered,
-                       __global unsigned char *image, int w, int h,
-                       __global float *filter_kernel, int kernel_radius,
-                       int channel_count) {
-  return;
+unsigned char filter_region_one_channel_horizontal(
+    __global unsigned char *image, int width, int start, int end,
+    __global float *filter_kernel, int kernel_radius, int channel_count) {
+  int midpoint = (start + end) / 2;
+  float start_row = (float)floor((float)start / width);
+  float midpoint_row = (float)floor((float)midpoint / width);
+  float end_row = (float)floor((float)end / width);
+
+  int end_overflowing = end_row > midpoint_row;
+  int curr_row_last_index = width * (midpoint_row + 1) - 1;
+  if (end_overflowing) {
+    end = curr_row_last_index;
+  }
+
+  int start_underflowing = start_row < midpoint_row;
+  int curr_row_first_index = width * midpoint_row;
+  int curr_channel = end % channel_count;
+  if (start_underflowing) {
+    start = curr_row_first_index + curr_channel;
+  }
+
+  float result = 0;
+  int ki = 0;
+  for (int i = start; i <= end; i += channel_count) {
+    result += image[i] * filter_kernel[ki++];
+  }
+
+  return result;
+}
+
+unsigned char filter_region_one_channel_vertical(__global unsigned char *image,
+                                                 int width, int height,
+                                                 int start, int end,
+                                                 __global float *filter_kernel,
+                                                 int kernel_radius) {
+  float start_row = (float)floor((float)start / width);
+  float end_row = (float)ceil((float)end / width);
+
+  int start_col = start % width;
+  int end_col = end % width;
+
+  int end_overflowing = end_row > height;
+  int curr_col_last_index = width * (height - 1) + start_col;
+  if (end_overflowing) {
+    end = curr_col_last_index;
+  }
+
+  int start_underflowing = start_row < 0;
+  if (start_underflowing) {
+    start = end_col;
+  }
+
+  float result = 0;
+  int ki = 0;
+  for (int i = start; i <= end; i += width) {
+    result += image[i] * filter_kernel[ki++];
+  }
+
+  return result;
+}
+
+__kernel void filter_image_horizontal_cl(__global unsigned char *filtered,
+                                         __global unsigned char *image, int w,
+                                         int h, __global float *filter_kernel,
+                                         int kernel_radius, int channel_count) {
+  const int width = w * channel_count;
+  const int height = h;
+  int tid = get_global_id(0);
+
+  int x = tid % width;
+
+  int start;
+  int end;
+  if (x >= kernel_radius * channel_count &&
+      x < width - kernel_radius * channel_count) {
+    start = tid - kernel_radius * channel_count;
+    end = tid + kernel_radius * channel_count;
+
+    filtered[tid] = filter_region_one_channel_horizontal(
+        image, width, start, end, filter_kernel, kernel_radius, channel_count);
+  }
+}
+
+__kernel void filter_image_vertical_cl(__global unsigned char *filtered,
+                                       __global unsigned char *image, int w,
+                                       int h, __global float *filter_kernel,
+                                       int kernel_radius, int channel_count) {
+  const int width = w * channel_count;
+  const int height = h;
+  int tid = get_global_id(0);
+
+  int x = tid % width;
+  int y = tid / width;
+
+  int start;
+  int end;
+  if (y >= kernel_radius - 1 && y <= height - kernel_radius &&
+      x >= kernel_radius * channel_count &&
+      x < width - kernel_radius * channel_count) {
+    start = tid - kernel_radius * width;
+    end = tid + kernel_radius * width;
+
+    filtered[tid] = filter_region_one_channel_vertical(
+        image, width, height, start, end, filter_kernel, kernel_radius);
+  }
 }

@@ -30,7 +30,7 @@ int main(int argc, const char *argv[])
     printf("\tColor channels: 3 (RGB)\n");
     printf("\tBit depth: 8\n");
 
-    image_buffer = *filter(&image_buffer, w, h, channel_count, kernel_radius, &box_kernel_fun, REPEAT);
+    image_buffer = *filter_cl(&image_buffer, w, h, channel_count, kernel_radius, &gaussian_kernel_fun, REPEAT);
 
     printf("Filter options:\n");
     printf("\tKernel radius: %li\n", kernel_radius);
