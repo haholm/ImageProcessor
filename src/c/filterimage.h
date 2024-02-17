@@ -21,7 +21,11 @@ float gaussian_kernel_fun(int i, int radius);
 
 unsigned char **filter(unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode);
 
-unsigned char **filter_cl(unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode);
+#ifdef CL
+#include "cl_helper.h"
+#include "gl_helper.h"
+
+void filter_cl(cl_handle *handle, unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode);
 
 static const char *cl_string = "#include \"filterimage_types.h\"\n"
                                "\n"
@@ -180,3 +184,4 @@ static const char *cl_string = "#include \"filterimage_types.h\"\n"
                                "  }\n"
                                "}\n"
                                "\n";
+#endif

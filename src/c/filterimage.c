@@ -1,10 +1,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include "filterimage.h"
-#include "cl_helper.h"
 
 /* Convolves a horizontal filter kernel across an image region.*/
 unsigned char filter_region_one_channel_horizontal(unsigned char **image, int width, int start, int end, float **kernel, int kernel_radius, int channel_count)
@@ -179,7 +178,9 @@ float gaussian_kernel_fun(int i, int radius)
         return 1;
     }
 
-    return (1 / sqrtf(2 * M_PI * powf(std_dev, 2))) * powf(M_E, -powf(i, 2) / (2 * powf(std_dev, 2)));
+    // Normalization factor based on the integral of the gaussian function.
+    double normal_factor = 1 / (sqrt((double)pow(std_dev, 2) * M_PI / 2.0) * (erf(radius / sqrt(2 * pow(std_dev, 2))) - erf(-radius / sqrt(2 * pow(std_dev, 2)))));
+    return normal_factor * pow(M_E, -pow(i, 2) / (2 * pow(std_dev, 2)));
 }
 
 unsigned char **filter(unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode)
@@ -188,9 +189,10 @@ unsigned char **filter(unsigned char **image, int width, int height, int channel
     int padded_width = width + padding,
         padded_height = height + padding;
 
-    clock_t start, end;
+    struct timeval start, end;
     double cpu_time_used;
-    start = clock();
+    gettimeofday(&start, NULL);
+
     unsigned char *padded_image = malloc(padded_width * padded_height * channel_count * sizeof(unsigned char));
     pad_image(image, &padded_image, width, height, padding, channel_count, overflow_mode);
 
@@ -203,8 +205,9 @@ unsigned char **filter(unsigned char **image, int width, int height, int channel
 
     unpad_image(&filtered, image, width, height, padding, channel_count);
 
-    end = clock();
-    cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
+    gettimeofday(&end, NULL);
+    cpu_time_used = (end.tv_sec - start.tv_sec) * 1000.0;    // sec to ms
+    cpu_time_used += (end.tv_usec - start.tv_usec) / 1000.0; // us to ms
     printf("cpu_time_used: %f\n", cpu_time_used);
 
     free(horizontally_filtered);
@@ -214,31 +217,26 @@ unsigned char **filter(unsigned char **image, int width, int height, int channel
     return image;
 }
 
-unsigned char **filter_cl(unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode)
+#ifdef CL
+void filter_cl(cl_handle *handle, unsigned char **image, int width, int height, int channel_count, int kernel_radius, float (*filter_fun)(int i, int radius), OverflowMode overflow_mode)
 {
     int padding = kernel_radius * 2;
     int padded_width = width + padding,
         padded_height = height + padding;
 
-    clock_t start, end;
+    struct timeval start, end;
     double gpu_time_used;
-    start = clock();
-
-    cl_context context;
-    cl_command_queue command_queue;
-    cl_program program;
-    cl_init(&context, &command_queue, &program, cl_string);
+    gettimeofday(&start, NULL);
 
     size_t image_size = width * height * channel_count * sizeof(unsigned char);
-    cl_mem image_d = cl_alloc(image_size, context, command_queue, *image);
+    cl_mem image_d = cl_alloc(image_size, handle, *image);
 
     size_t padded_image_size = padded_width * padded_height * channel_count * sizeof(unsigned char);
-    cl_mem padded_image_d = cl_alloc(padded_image_size, context, command_queue, NULL);
+    cl_mem padded_image_d = cl_alloc(padded_image_size, handle, NULL);
 
     cl_kernel pad_image_cl;
     cl_execute_kernel(
-        program,
-        command_queue,
+        handle,
         &pad_image_cl,
         "pad_image_cl",
         7,
@@ -251,16 +249,15 @@ unsigned char **filter_cl(unsigned char **image, int width, int height, int chan
     size_t kernel_size = (2 * kernel_radius + 1) * sizeof(float);
     float *kernel = malloc(kernel_size);
     create_1d_filter_kernel(&kernel, filter_fun, kernel_radius);
-    cl_mem kernel_d = cl_alloc(kernel_size, context, command_queue, kernel);
+    cl_mem kernel_d = cl_alloc(kernel_size, handle, kernel);
 
     size_t filtered_size = padded_width * padded_height * channel_count * sizeof(unsigned char);
-    cl_mem filtered_d = cl_alloc(filtered_size, context, command_queue, NULL);
-    cl_mem horizontally_filtered_d = cl_alloc(filtered_size, context, command_queue, NULL);
+    cl_mem filtered_d = cl_alloc(filtered_size, handle, NULL);
+    cl_mem horizontally_filtered_d = cl_alloc(filtered_size, handle, NULL);
 
     cl_kernel filter_image_horizontal_cl;
     cl_execute_kernel(
-        program,
-        command_queue,
+        handle,
         &filter_image_horizontal_cl,
         "filter_image_horizontal_cl",
         7,
@@ -278,8 +275,7 @@ unsigned char **filter_cl(unsigned char **image, int width, int height, int chan
 
     cl_kernel filter_image_vertical_cl;
     cl_execute_kernel(
-        program,
-        command_queue,
+        handle,
         &filter_image_vertical_cl,
         "filter_image_vertical_cl",
         7,
@@ -297,29 +293,26 @@ unsigned char **filter_cl(unsigned char **image, int width, int height, int chan
 
     cl_event event;
     unsigned char *filtered = malloc(filtered_size);
-    cl_int ret = clEnqueueReadBuffer(command_queue, filtered_d, CL_TRUE, 0, filtered_size, filtered, 0, NULL, &event);
+    cl_int ret = clEnqueueReadBuffer(handle->command_queue, filtered_d, CL_TRUE, 0, filtered_size, filtered, 0, NULL, &event);
     cl_handle_err(ret, 11);
     clWaitForEvents(1, &event);
 
     unpad_image(&filtered, image, width, height, padding, channel_count);
 
-    end = clock();
-    gpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
+    gettimeofday(&end, NULL);
+    gpu_time_used = (end.tv_sec - start.tv_sec) * 1000.0;    // sec to ms
+    gpu_time_used += (end.tv_usec - start.tv_usec) / 1000.0; // us to ms
     printf("gpu_time_used: %f\n", gpu_time_used);
 
     free(filtered);
     free(kernel);
 
-    ret = clFlush(command_queue);
-    ret = clFinish(command_queue);
     ret = clReleaseKernel(pad_image_cl);
-    ret = clReleaseProgram(program);
     ret = clReleaseMemObject(image_d);
     ret = clReleaseMemObject(horizontally_filtered_d);
     ret = clReleaseMemObject(filtered_d);
     ret = clReleaseMemObject(kernel_d);
     ret = clReleaseMemObject(padded_image_d);
-    ret = clReleaseCommandQueue(command_queue);
-    ret = clReleaseContext(context);
-    return image;
 }
+
+#endif
